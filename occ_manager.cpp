@@ -326,8 +326,7 @@ void Manager::createObjects(const std::string& occ)
     // Create the power cap monitor object
     if (!pcap)
     {
-        pcap = std::make_unique<open_power::occ::powercap::PowerCap>(
-            *statusObjects.back());
+        pcap = std::make_unique<open_power::occ::powercap::PowerCap>();
     }
 
     if (statusObjects.back()->isMasterOcc())
@@ -1170,7 +1169,7 @@ void Manager::updatePcapBounds(bool& parmsChanged, uint32_t& capSoftMin,
                 break;
             }
         }
-        pcap->updatePcapBounds();
+        pcap->updatePcapBounds(parmsChanged, capSoftMin, capHardMin, capMax);
     }
 }
 
