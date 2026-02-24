@@ -44,7 +44,7 @@ void Manager::createPldmHandle()
 // findAndCreateObjects():
 // Takes care of getting the required objects created and
 // finds the available devices/processors.
-// (function is called everytime the discoverTimer expires)
+// (function is called every time the discoverTimer expires)
 // - create the PowerMode object to control OCC modes
 // - create statusObjects for each OCC device found
 // - waits for OCC Active sensors PDRs to become available
