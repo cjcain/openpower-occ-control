@@ -645,7 +645,7 @@ void Status::readProcAssociation()
     catch (const sdbusplus::exception_t& e)
     {
         lg2::error(
-            "readProcAssociation: Unable to get proc assocated with {PATH} - {ERROR}",
+            "readProcAssociation: Unable to get proc associated with {PATH} - {ERROR}",
             "PATH", path, "ERROR", e.what());
         procPath = {};
     }
