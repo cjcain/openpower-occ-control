@@ -99,9 +99,10 @@ class OccPollHandler
 
     };
 
-    /** @brief Get the sensor path and dvfs path.
+    /** @brief Get the sensor path, dvfs path, and tcontrol path.
      *  @param[in] sensorPath - return path of the OCC sensor.
      *  @param[in] dvfsTempPath - return path of the DVFS sensor.
+     *  @param[in] tcontrolTempPath - return path of the tcontrol sensor.
      *  @param[in] SensorID - Input Id of the Sensor.
      *  @param[in] fruTypeValue - Input fru type.
      *  @param[in] occInstance - Input Id of the OCC.
@@ -110,10 +111,13 @@ class OccPollHandler
      */
     bool BuildTempDbusPaths(
         std::string& sensorPath, std::string& dvfsTempPath,
-        const uint32_t SensorID, const uint32_t fruTypeValue,
-        const uint32_t occInstance, const bool isHottest = false);
+        std::string& tcontrolTempPath, const uint32_t SensorID,
+        const uint32_t fruTypeValue, const uint32_t occInstance,
+        const bool isHottest = false);
 
-    /** @brief The dimm temperature sensor names map  used by */
+    // P12 naming: suffix appended after "chassis_procY_dimmN" in
+    // BuildTempDbusPaths(); DVFS suffix appended after "chassis_procY_".
+    /** @brief The dimm temperature sensor names map */
     const std::map<uint32_t, std::string> dimmTempSensorName = {
         {internalMemCtlr, "_intmb_temp"},
         {dimm, "_dram_temp"},
@@ -121,7 +125,7 @@ class OccPollHandler
         {PMIC, "_pmic_temp"},
         {memCtlrExSensor, "_extmb_temp"}};
 
-    /** @brief The dimm DVFS temperature sensor names map  */
+    /** @brief The dimm DVFS temperature sensor names map */
     const std::map<uint32_t, std::string> dimmDVFSSensorName = {
         {internalMemCtlr, "dimm_intmb_dvfs_temp"},
         {dimm, "dimm_dram_dvfs_temp"},
@@ -129,6 +133,25 @@ class OccPollHandler
         {PMIC, "dimm_pmic_dvfs_temp"},
         {memCtlrExSensor, "dimm_extmb_dvfs_temp"}};
 
+    // P12 naming: values are leaf names appended to "chassis_procY_" in the
+    // power push functions (except "system" which has no proc prefix).
+    //
+    // funcIDs 1-4   : per-proc memory domain power (aggregated by that OCC)
+    // funcIDs 5-8   : per-proc total processor power (aggregated by that OCC)
+    // funcIDs 9-12  : per-proc cache power
+    // funcIDs 13-15 : IO subsystem power
+    // funcIDs 16-17 : fan power
+    // funcIDs 18-19 : storage power
+    // funcID  23    : memory cache power
+    // funcIDs 25-27 : per-proc memory channel power
+    // funcID  34    : PCIe total power
+    // funcIDs 35-38 : PCIe per-DCM power
+    // funcIDs 39-42 : IO per-DCM power
+    // funcID  43    : AVDD total power
+    //
+    // EXTN PWRP/PWRM are raw per-chiplet DC power (derated to AC) and use
+    // separate paths: chassis_procY_chiplet_power /
+    // chassis_procY_chiplet_mem_power
     /** @brief The power sensor names map */
     const std::map<std::string, std::string> powerSensorName = {
         {"system", "total_power"}, {"1", "p0_mem_power"},

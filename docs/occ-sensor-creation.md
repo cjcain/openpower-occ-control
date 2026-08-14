@@ -52,6 +52,26 @@ OccManager / timer
 
 ---
 
+## P12 Multi-Chassis Naming Convention
+
+P12 systems are multi-chassis with "taps" (core groups). All sensor paths use
+the following convention:
+
+```text
+/xyz/openbmc_project/sensors/<type>/chassis_procY_<descriptor>
+```
+
+Where:
+
+- `chassis` — fixed literal prefix (per-chassis detection is not yet available)
+- `Y` — OCC instance / processor number (0-based)
+- `<descriptor>` — sensor-type-specific suffix (see tables below)
+
+Power sensors scoped to a single processor carry the `chassis_procY_` prefix.
+System-wide sensors (e.g. `total_power`) do **not** carry a proc prefix.
+
+---
+
 ## Sensor Path Construction
 
 All paths share the root `/xyz/openbmc_project/sensors` and are then broken into
@@ -66,16 +86,23 @@ Base: `/xyz/openbmc_project/sensors/temperature/`
 The suffix is determined by the `fruType` field and the `SensorID` from the OCC
 data:
 
-| fruType                                   | SensorID type | Example D-Bus path                            |
-| ----------------------------------------- | ------------- | --------------------------------------------- |
-| `VRMVdd`                                  | —             | `.../temperature/vrm_vdd0_temp`               |
-| `processorIoRing`                         | —             | `.../temperature/proc0_ioring_temp`           |
-| `SID_TYPE_DIMM`                           | DIMM          | `.../temperature/dimm5_dram_temp`             |
-| `SID_TYPE_DIMM` (hottest)                 | DIMM          | `.../temperature/dimm_dram_hottest`           |
-| `SID_TYPE_CORE / processorCore`           | Core          | `.../temperature/proc0_core3_1_temp`          |
-| `SID_TYPE_CORE / processorCore` (hottest) | Core          | `.../temperature/proc0_core_hottest_temp`     |
-| `SID_TYPE_CORE / processorMMA`            | Core          | `.../temperature/proc0_core3_0_mma_temp`      |
-| `SID_TYPE_CORE / processorMMA` (hottest)  | Core          | `.../temperature/proc0_core_mma_hottest_temp` |
+| fruType                         | SensorID type | Example D-Bus path                                        |
+| ------------------------------- | ------------- | --------------------------------------------------------- |
+| `VRMVdd`                        | —             | `.../temperature/chassis_proc0_vrm_vdd_temp`              |
+| `processorIoRing`               | —             | `.../temperature/chassis_proc0_ioring_temp`               |
+| `SID_TYPE_DIMM`                 | DIMM          | `.../temperature/chassis_proc0_dimm5_dram_temp`           |
+| `SID_TYPE_DIMM` (hottest)       | DIMM          | `.../temperature/chassis_proc0_dimm_dram_temp_hottest`    |
+| `SID_TYPE_CORE / processorCore` | Core          | `.../temperature/chassis_proc0_coregroup3_core0_temp`     |
+| `SID_TYPE_CORE / processorCore` | Tap           | `.../temperature/chassis_proc0_coregroup0_temp`           |
+| `SID_TYPE_CORE / processorMMA`  | Core          | `.../temperature/chassis_proc0_coregroup3_core0_mma_temp` |
+| `SID_TYPE_CORE / processorMMA`  | Tap           | `.../temperature/chassis_proc0_coregroup0_mma_temp`       |
+
+**Variable mapping for core sensors:**
+
+- `coregroupZ` — tap number, 0–7 ; each tap covers 8 cores (tap0=cores 0–7, …
+  tap7=cores 56-63)
+- `coreW` — core index within the tap, 0–7; uniquely identifies the core inside
+  its tap group
 
 The DIMM suffix strings come from the `dimmTempSensorName` map in
 `occ_poll_handler.hpp`:
@@ -88,11 +115,22 @@ PMIC            → "_pmic_temp"
 memCtlrExSensor → "_extmb_temp"
 ```
 
-Each temperature sensor also has an associated **DVFS threshold** sensor created
-once per chip per FRU type at a companion path, e.g.:
-`.../temperature/proc0_core_dvfs_temp`
+Each core temperature sensor has two associated **threshold** sensors created
+once per tap group per FRU type:
 
-The `occInstance` integer embedded in the path names (e.g. `proc0_`, `proc1_`)
+| Threshold sensor | Purpose                                                     | Example D-Bus path                                       |
+| ---------------- | ----------------------------------------------------------- | -------------------------------------------------------- |
+| `dvfs_temp`      | OCC reduces processor frequency above this temperature      | `.../temperature/chassis_proc0_coregroup3_dvfs_temp`     |
+| `tcontrol_temp`  | Fans are increased when current temp exceeds this threshold | `.../temperature/chassis_proc0_coregroup3_tcontrol_temp` |
+
+The `tcontrol_temp` value is sent by the OCC in the TEMP sensor block at byte
+offset 8 of each record (added after `errorTemp`; only present when
+`bytesPerSensor >= 9`). The `dvfs_temp` value is at byte offset 6.
+
+`processorIoRing` sensors have only a `dvfs_temp` companion (no
+`tcontrol_temp`). VRMVdd and DIMM sensors have neither.
+
+The `occInstance` integer embedded in the path names (e.g. `proc0`, `proc1`)
 comes from the OCC instance ID (the chip/processor number) passed into the
 handler at construction time.
 
@@ -101,25 +139,28 @@ handler at construction time.
 Base: `/xyz/openbmc_project/sensors/power/`
 
 The leaf name is looked up from the `powerSensorName` map in
-`occ_poll_handler.hpp`, keyed by a **function ID** extracted from the OCC data:
+`occ_poll_handler.hpp`, keyed by a **function ID** extracted from the OCC data.
+For all proc-scoped sensors the `chassis-procY-` prefix is prepended at call
+time; `total-power` is the power for the node. There is also a system-wide
+total_power that will be the sum of all chassis total_power sensors.
 
-| Function ID                                  | D-Bus path suffix  |
-| -------------------------------------------- | ------------------ |
-| `system`                                     | `total_power`      |
-| `1`                                          | `p0_mem_power`     |
-| `5`                                          | `p0_power`         |
-| `9`                                          | `p0_cache_power`   |
-| `13`                                         | `io_a_power`       |
-| `16`                                         | `fans_a_power`     |
-| `34`                                         | `pcie_power`       |
-| `43`                                         | `avdd_total_power` |
-| _(full table in `occ_poll_handler.hpp:133`)_ |                    |
+| Function ID                              | D-Bus path suffix (after `chassis_procY_`) |
+| ---------------------------------------- | ------------------------------------------ |
+| `system`                                 | `total_power`                              |
+| `1`                                      | `mem_power`                                |
+| `5`                                      | `proc_power`                               |
+| `9`                                      | `cache_power`                              |
+| `13`                                     | `io_a_power`                               |
+| `16`                                     | `fans_a_power`                             |
+| `34`                                     | `pcie_power`                               |
+| `43`                                     | `avdd_total_power`                         |
+| _(full table in `occ_poll_handler.hpp`)_ |                                            |
 
 Chiplet-level extended power sensors use inline path construction:
 
 ```text
-/xyz/openbmc_project/sensors/power/chiplet0_power
-/xyz/openbmc_project/sensors/power/chiplet0_mem_power
+/xyz/openbmc_project/sensors/power/chassis_proc0_chiplet_power
+/xyz/openbmc_project/sensors/power/chassis_proc0_chiplet_mem_power
 ```
 
 ### Total power / caps sensor
@@ -201,8 +242,10 @@ Data source: hwmon sysfs directory returned by `statusObject.getHwmonPath()`.
 2. Read label string; parse middle field of `<sensorId>_<functionId>_<apss>`
    format via `getPowerLabelFunctionID()`.
 3. Look up function ID in `powerSensorName` to obtain path suffix.
-4. Read the companion `input` file for the watt value.
-5. Publish via `setUnit()` / `setValue()` / `setOperationalStatus()`.
+4. Prepend `chassis-procY-` for all proc-scoped sensors
+5. Read the companion `input` file for the watt value.
+6. Publish via `setUnit()` / `setValue()` / `setOperationalStatus()`.
+7. Sum all chassis-procY-total_power readings into a system total_power sensor
 
 ---
 
@@ -234,10 +277,11 @@ to a handler:
 
 ### TEMP block (`PushTempSensorsToDbus`)
 
-Each record is 8 bytes: `SensorID (4)`, `fruType (1)`, `temp (1)`,
-`dvfsTemp (1)`, `errorTemp (1)`. The handler finds the **hottest** sensor per
-`fruType` across all records, then publishes one "hottest" D-Bus path per FRU
-type using `BuildTempDbusPaths(..., isHottest=true)`.
+Each record is at least 9 bytes: `SensorID (4)`, `fruType (1)`, `temp (1)`,
+`dvfsTemp (1)`, `errorTemp (1)`, `tcontrolTemp (1)`. OCC will only be publishing
+one temperature per FRU type in the TEMP block. `tcontrolTemp` is only read when
+`bytesPerSensor >= 9`; older 8-byte records leave the tcontrol sensor
+unpopulated.
 
 ### EXTT block (`PushExttSensorsToDbus`)
 
@@ -248,7 +292,8 @@ hottest), using `BuildTempDbusPaths(..., isHottest=false)`.
 ### POWR block (`PushPowrSensorsToDbus`)
 
 Each record is 22 bytes. `functionalID` (byte 4) is converted to string and
-looked up in `powerSensorName`. `SensorValue` is at bytes 20–21 in Watts.
+looked up in `powerSensorName`. `SensorValue` is at bytes 20–21 in Watts. The
+path is `chassis-procY-<leaf>` for proc-scoped sensors.
 
 ### CAPS block (`PushCapsSensorsToDbus`)
 
@@ -259,7 +304,10 @@ hard-coded path `total_power` with `TotalPower` purpose.
 
 Each record is 12 bytes. Only `EXTN_LABEL_PWRP` and `EXTN_LABEL_PWRM` IDs are
 handled; the power value is the last 2 bytes of the 6-byte value field, with
-DC→AC derating applied.
+DC→AC derating applied. Paths are:
+
+- `chassis-procY-coregroup-power` (`EXTN_LABEL_PWRP`)
+- `chassis-procY-coregroup-mem-power` (`EXTN_LABEL_PWRM`)
 
 ---
 

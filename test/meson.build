@@ -66,3 +66,53 @@ foreach t : tests
         workdir: meson.current_source_dir(),
     )
 endforeach
+
+# occ_sensor_path_test only exercises BuildTempDbusPaths — it does not need
+# the full occ_manager / powercap / pldm stack, so it gets its own minimal
+# source list to avoid unrelated compile errors in those files.
+sensor_path_test_sources = [
+    '../occ_dbus.cpp',
+    '../utils.cpp',
+    '../occ_command.cpp',
+    '../occ_errors.cpp',
+    '../occ_ffdc.cpp',
+    '../occ_poll_handler.cpp',
+    occ_sensor_hpp,
+]
+if get_option('app-poll-support').allowed()
+    sensor_path_test_sources += ['../occ_poll_app_handler.cpp']
+else
+    sensor_path_test_sources += [
+        '../occ_poll_kernel_handler.cpp',
+        'occ_sensor_path_test_stubs.cpp',
+    ]
+endif
+
+test(
+    'occ_sensor_path_test.cpp',
+    executable(
+        'occ_sensor_path_test_cpp',
+        'occ_sensor_path_test.cpp',
+        sensor_path_test_sources,
+        include_directories: '..',
+        dependencies: [gtest_dep, gmock_dep, pthread_dep, deps],
+    ),
+    workdir: meson.current_source_dir(),
+    args: ['--gtest_print_time=0'],
+    verbose: true,
+)
+
+# When the build uses -Db_sanitize=address,undefined the ASAN runtime aborts
+# on startup under Valgrind because it is not first in the dynamic-linker
+# preload chain.  Defining a 'valgrind' test setup here causes unit-test.py
+# to use --setup instead of --wrapper, letting us pass the suppression env
+# var that prevents ASAN from treating the ordering as fatal.
+add_test_setup(
+    'valgrind',
+    exe_wrapper: ['valgrind', '--error-exitcode=1'],
+    env: {
+        'ASAN_OPTIONS': 'verify_asan_link_order=0:halt_on_error=1:abort_on_error=1:print_summary=1',
+        'UBSAN_OPTIONS': 'halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1',
+    },
+    timeout_multiplier: 10,
+)

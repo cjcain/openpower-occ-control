@@ -19,23 +19,29 @@ using namespace std::literals::chrono_literals;
 constexpr uint32_t fruTypeNotAvailable = 0xFF;
 
 bool OccPollHandler::BuildTempDbusPaths(
-    std::string& sensorPath, std::string& dvfsTempPath, const uint32_t SensorID,
+    std::string& sensorPath, std::string& dvfsTempPath,
+    std::string& tcontrolTempPath, const uint32_t SensorID,
     const uint32_t fruTypeValue, const uint32_t occInstance,
     const bool isHottest)
 {
     bool returnSensorFound = true;
+
+    // P12 multi-chassis naming: chassis_procY_<suffix>
+    // "chassis" is a fixed prefix until per-chassis detection is available.
+    const std::string procPrefix =
+        "chassis_proc" + std::to_string(occInstance) + "_";
+
     sensorPath = OCC_SENSORS_ROOT + std::string("/temperature/");
 
     if (fruTypeValue == VRMVdd)
     {
-        sensorPath.append("vrm_vdd" + std::to_string(occInstance) + "_temp");
+        sensorPath.append(procPrefix + "vrm_vdd_temp");
     }
     else if (fruTypeValue == processorIoRing)
     {
-        sensorPath.append(
-            "proc" + std::to_string(occInstance) + "_ioring_temp");
-        dvfsTempPath = std::string{OCC_SENSORS_ROOT} + "/temperature/proc" +
-                       std::to_string(occInstance) + "_ioring_dvfs_temp";
+        sensorPath.append(procPrefix + "ioring_temp");
+        dvfsTempPath = std::string{OCC_SENSORS_ROOT} + "/temperature/" +
+                       procPrefix + "ioring_dvfs_temp";
     }
     else
     {
@@ -60,56 +66,79 @@ bool OccPollHandler::BuildTempDbusPaths(
                 {
                     if (isHottest)
                     {
-                        sensorPath.append("dimm" + iter->second + "_hottest");
+                        sensorPath.append(
+                            procPrefix + "dimm" + iter->second + "_hottest");
                     }
                     else
                     {
                         sensorPath.append(
-                            "dimm" + std::to_string(instanceID) + iter->second);
+                            procPrefix + "dimm" + std::to_string(instanceID) +
+                            iter->second);
                     }
                     dvfsTempPath = std::string{OCC_SENSORS_ROOT} +
-                                   "/temperature/" +
+                                   "/temperature/" + procPrefix +
                                    dimmDVFSSensorName.at(fruTypeValue);
                 }
             }
         }
         else if (type == SID_TYPE_CORE)
         {
-            // The OCC reports small core temps, of which there are
-            // two per big core.  All current P10 systems are in big
-            // core mode, so use a big core name.
-            uint16_t coreNum = instanceID / 2;
-            uint16_t tempNum = instanceID % 2;
-            sensorPath.append("proc" + std::to_string(occInstance) + "_core");
+            // P12 tap group layout (8 taps, 8 cores each, 64 cores total per
+            // proc):
+            //   tap0 = cores  0-7
+            //   tap1 = cores  8-15
+            //   ...
+            // OCC reports core which is the instanceID (0-63).
+            // tapGroup  = instanceID / 8  (0-7)
+            // coreInTap = instanceID % 8  (0-7)
+            //
+            // Full path (per-core): chassis_procY_coregroupZ_coreW_temp
+            //
+            // MMA tap-level sentinel: instanceID = 0xFF00 | tapGroup
+            //   The OCC uses this to send one aggregate MMA value per tap.
+            //   Path: chassis_procY_coregroupZ_mma_temp
+            uint16_t tapGroup = instanceID / 8;
+            uint16_t coreInTap = instanceID % 8;
             if (fruTypeValue == processorCore)
             {
                 if (isHottest)
                 {
-                    sensorPath.append("_hottest_temp");
+                    // The OCC determines the tap temperature — publish it as
+                    // the tap-level sensor (chassis_procY_coregroupZ_temp).
+                    sensorPath.append(procPrefix + "coregroup" +
+                                      std::to_string(tapGroup) + "_temp");
                 }
                 else
                 {
-                    sensorPath.append(std::to_string(coreNum) + "_" +
-                                      std::to_string(tempNum) + "_temp");
+                    sensorPath.append(
+                        procPrefix + "coregroup" + std::to_string(tapGroup) +
+                        "_core" + std::to_string(coreInTap) + "_temp");
                 }
-                dvfsTempPath = std::string{OCC_SENSORS_ROOT} +
-                               "/temperature/proc" +
-                               std::to_string(occInstance) + "_core_dvfs_temp";
+                dvfsTempPath = std::string{OCC_SENSORS_ROOT} + "/temperature/" +
+                               procPrefix + "coregroup" +
+                               std::to_string(tapGroup) + "_dvfs_temp";
+                tcontrolTempPath = std::string{OCC_SENSORS_ROOT} +
+                                   "/temperature/" + procPrefix + "coregroup" +
+                                   std::to_string(tapGroup) + "_tcontrol_temp";
             }
             else if (fruTypeValue == processorMMA)
             {
-                if (isHottest)
+                // Tap-level MMA only: OCC signals with instanceID = 0xFF00 |
+                // tapGroup MMA has tcontrol but no dvfs threshold.
+                if ((instanceID & 0xFF00) == 0xFF00)
                 {
-                    sensorPath.append("_mma_hottest_temp");
+                    uint16_t tapNum = instanceID & 0x00FF;
+                    sensorPath.append(procPrefix + "coregroup" +
+                                      std::to_string(tapNum) + "_mma_temp");
+                    tcontrolTempPath =
+                        std::string{OCC_SENSORS_ROOT} + "/temperature/" +
+                        procPrefix + "coregroup" + std::to_string(tapNum) +
+                        "_mma_tcontrol_temp";
                 }
                 else
                 {
-                    sensorPath.append(std::to_string(coreNum) + "_" +
-                                      std::to_string(tempNum) + "_mma_temp");
+                    returnSensorFound = false;
                 }
-                dvfsTempPath =
-                    std::string{OCC_SENSORS_ROOT} + "/temperature/proc" +
-                    std::to_string(occInstance) + "_core_mma_dvfs_temp";
             }
             else
             {

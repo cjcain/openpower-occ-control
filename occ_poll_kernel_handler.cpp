@@ -318,9 +318,10 @@ void OccPollKernelHandler::pushTempSensorsToDbus(const fs::path& path,
 
         std::string sensorPath = "";
         std::string dvfsTempPath = "";
+        std::string tcontrolTempPath = "";
         // if no Dbus sensor found then continue
-        if (!BuildTempDbusPaths(sensorPath, dvfsTempPath, labelValue,
-                                fruTypeValue, occInstance))
+        if (!BuildTempDbusPaths(sensorPath, dvfsTempPath, tcontrolTempPath,
+                                labelValue, fruTypeValue, occInstance))
         {
             continue;
         }
@@ -343,6 +344,9 @@ void OccPollKernelHandler::pushTempSensorsToDbus(const fs::path& path,
                     e.code().value());
             }
         }
+
+        // tcontrol value will be supplied by the OCC when available.
+        // tcontrolTempPath is computed above and ready for use when needed.
 
         uint32_t faultValue{0};
         try
@@ -484,6 +488,7 @@ void OccPollKernelHandler::pushExtnSensorsToDbus(const fs::path& path,
         const std::string filePathString = file.path().string().substr(
             0, file.path().string().length() - tempLabel.length());
 
+        // P12 naming: chassis_procY_chiplet_<type>
         std::string sensorPath = OCC_SENSORS_ROOT + std::string("/power/");
 
         // Labels of EXTN sections from OCC interface Document
@@ -493,17 +498,19 @@ void OccPollKernelHandler::pushExtnSensorsToDbus(const fs::path& path,
             // Label indicating byte 5 and 6 is the current (mem,proc) power in
             //      Watts.
 
-            // Build the dbus String for this chiplet power asset.
+            // Build the dbus path for this chiplet power reading.
+            // These are raw DC power derated to AC — distinct from the
+            // aggregated sled_proc_power / sled_mem_power in the POWR block.
             if (SensorName == EXTN_LABEL_PWRP)
             {
-                labelValue = "_power";
+                labelValue = "_chiplet_power";
             }
-            else // else EXTN_LABEL_PWRM_MEMORY_POWER
+            else // EXTN_LABEL_PWRM — memory chiplet power
             {
-                labelValue = "_mem_power";
+                labelValue = "_chiplet_mem_power";
             }
             sensorPath.append(
-                "chiplet" + std::to_string(occInstanceID) + labelValue);
+                "chassis_proc" + std::to_string(occInstanceID) + labelValue);
 
             // Read in data value of the sensor from file.
             // Read in as string due to different format of data in sensors.
@@ -586,6 +593,7 @@ void OccPollKernelHandler::pushPowrSensorsToDbus(const fs::path& path,
         const std::string filePathString = file.path().string().substr(
             0, file.path().string().length() - tempLabel.length());
 
+        // P12 naming: chassis_procY_<leaf> (total_power0 has no proc scope)
         std::string sensorPath = OCC_SENSORS_ROOT + std::string("/power/");
 
         auto iter = powerSensorName.find(*functionID);
@@ -593,7 +601,8 @@ void OccPollKernelHandler::pushPowrSensorsToDbus(const fs::path& path,
         {
             continue;
         }
-        sensorPath.append(iter->second);
+        sensorPath.append("chassis_proc" + std::to_string(occInstanceID) + "_" +
+                          iter->second);
 
         double tempValue{0};
 
@@ -619,7 +628,7 @@ void OccPollKernelHandler::pushPowrSensorsToDbus(const fs::path& path,
         if (statusObject.existingSensors.find(sensorPath) ==
             statusObject.existingSensors.end())
         {
-            if (iter->second == "total_power")
+            if (iter->second == "total_power0")
             {
                 dbus::OccDBusSensors::getOccDBus().setPurpose(
                     sensorPath,
