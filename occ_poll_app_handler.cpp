@@ -216,16 +216,18 @@ void OccPollAppHandler::PushTempSensorsToDbus(uint16_t& index)
             uint32_t sensorId;
             uint8_t temp;
             uint8_t dvfsTemp;
+            uint8_t tcontrolTemp;
         };
-        struct fru_temp_t hottest[MAX_FRU_TYPES] = {{0, 0, 0}};
+        struct fru_temp_t hottest[MAX_FRU_TYPES] = {{0, 0, 0, 0}};
         for (uint16_t i = 0; i < NumberSensors; i++)
         {
-            // Temp Sensor Record Data format for POLL
-            //  SensorID:     4 byte
-            //  fruTypeValue: 1 byte
-            //  tempValue:    1 byte
-            //  throttleTemp: 1 byte
-            //  errorTemp:    1 byte
+            // Temp Sensor Record Data format for POLL (bytesPerSensor >= 9)
+            //  SensorID:      4 byte  (index+0..3)
+            //  fruTypeValue:  1 byte  (index+4)
+            //  tempValue:     1 byte  (index+5)
+            //  dvfsTemp:      1 byte  (index+6)  frequency-reduction threshold
+            //  errorTemp:     1 byte  (index+7)
+            //  tcontrolTemp:  1 byte  (index+8)  fan-increase threshold
             //----------------------
             const uint32_t SensorID = UINT32_GET(&PollRspData[index]);
             const uint8_t fruTypeValue = PollRspData[index + 4];
@@ -233,11 +235,15 @@ void OccPollAppHandler::PushTempSensorsToDbus(uint16_t& index)
             {
                 const uint8_t tempValue = PollRspData[index + 5];
                 const uint8_t dvfsValue = PollRspData[index + 6];
+                // tcontrol is at byte 8; only present when bytesPerSensor >= 9
+                const uint8_t tcontrolValue =
+                    (bytesPerSensor >= 9) ? PollRspData[index + 8] : 0;
                 if (tempValue > hottest[fruTypeValue].temp)
                 {
                     hottest[fruTypeValue].sensorId = SensorID;
                     hottest[fruTypeValue].temp = tempValue;
                     hottest[fruTypeValue].dvfsTemp = dvfsValue;
+                    hottest[fruTypeValue].tcontrolTemp = tcontrolValue;
                 }
             }
             else if (fruTypeValue != FRU_UNAVAILABLE)
@@ -259,9 +265,11 @@ void OccPollAppHandler::PushTempSensorsToDbus(uint16_t& index)
             {
                 std::string sensorPath = "";
                 std::string dvfsTempPath = "";
+                std::string tcontrolTempPath = "";
                 // if Dbus sensor found and good FruType and value not 0, then
                 // update hottest temp on dbus
                 if ((BuildTempDbusPaths(sensorPath, dvfsTempPath,
+                                        tcontrolTempPath,
                                         hottest[fruType].sensorId, fruType,
                                         occInstanceID, true)))
                 {
@@ -275,6 +283,13 @@ void OccPollAppHandler::PushTempSensorsToDbus(uint16_t& index)
                     {
                         dbus::OccDBusSensors::getOccDBus().setDvfsTemp(
                             dvfsTempPath, hottest[fruType].dvfsTemp);
+                    }
+                    if (!tcontrolTempPath.empty() &&
+                        !dbus::OccDBusSensors::getOccDBus().hasTcontrolTemp(
+                            tcontrolTempPath))
+                    {
+                        dbus::OccDBusSensors::getOccDBus().setTcontrolTemp(
+                            tcontrolTempPath, hottest[fruType].tcontrolTemp);
                     }
                     // Chassis Association will be set in EXTT section (since
                     // that contains all sensors)
@@ -364,12 +379,15 @@ void OccPollAppHandler::PushPowrSensorsToDbus(uint16_t& index)
             uint16_t SensorValue = ((PollRspData[index + 20]) << 8) |
                                    (PollRspData[index + 21]);
 
+            // P12 naming: chassis_procY_<leaf>
+            const std::string procPrefix =
+                "chassis_proc" + std::to_string(occInstanceID) + "_";
             std::string sensorPath = OCC_SENSORS_ROOT + std::string("/power/");
 
             auto iter = powerSensorName.find(functionID);
             if (iter != powerSensorName.end())
             {
-                sensorPath.append(iter->second);
+                sensorPath.append(procPrefix + iter->second);
 
                 dbus::OccDBusSensors::getOccDBus().setUnit(
                     sensorPath, "xyz.openbmc_project.Sensor.Value.Unit.Watts");
@@ -442,8 +460,8 @@ void OccPollAppHandler::PushCapsSensorsToDbus(uint16_t& index)
             uint16_t CurrentPowerReading =
                 ((PollRspData[index + 2]) << 8) | (PollRspData[index + 3]);
 
-            std::string sensorPath = OCC_SENSORS_ROOT + std::string("/power/");
-            sensorPath.append("total_power");
+            std::string sensorPath =
+                OCC_SENSORS_ROOT + std::string("/power/total_power");
 
             dbus::OccDBusSensors::getOccDBus().setUnit(
                 sensorPath, "xyz.openbmc_project.Sensor.Value.Unit.Watts");
@@ -538,15 +556,20 @@ void OccPollAppHandler::PushExtnSensorsToDbus(uint16_t& index)
                 case EXTN_LABEL_WOFI:
                     break;
                 case EXTN_LABEL_PWRM:
+                    // Raw per-chiplet DC memory power, derated to AC.
+                    // Distinct from POWR sled_mem_power (which is aggregated).
                     push_power_to_dbus = true;
                     sensorPath.append(
-                        "/power/chiplet" + std::to_string(occInstanceID) +
-                        "_mem_power");
+                        "/power/chassis_proc" + std::to_string(occInstanceID) +
+                        "_chiplet_mem_power");
                     break;
                 case EXTN_LABEL_PWRP:
+                    // Raw per-chiplet DC processor power, derated to AC.
+                    // Distinct from POWR sled_proc_power (which is aggregated).
                     push_power_to_dbus = true;
-                    sensorPath.append("/power/chiplet" +
-                                      std::to_string(occInstanceID) + "_power");
+                    sensorPath.append(
+                        "/power/chassis_proc" + std::to_string(occInstanceID) +
+                        "_chiplet_power");
                     break;
                 case EXTN_LABEL_ERRH:
                     break;
@@ -623,10 +646,11 @@ void OccPollAppHandler::PushExttSensorsToDbus(uint16_t& index)
 
             std::string sensorPath = "";
             std::string dvfsTempPath = "";
+            std::string tcontrolTempPath = "";
             // if Dbus sensor found, and good FruType and value not 0, then
             // continue
-            if ((BuildTempDbusPaths(sensorPath, dvfsTempPath, SensorID, fruType,
-                                    occInstanceID)))
+            if ((BuildTempDbusPaths(sensorPath, dvfsTempPath, tcontrolTempPath,
+                                    SensorID, fruType, occInstanceID)))
             {
                 dbus::OccDBusSensors::getOccDBus().setValue(sensorPath,
                                                             temperature);

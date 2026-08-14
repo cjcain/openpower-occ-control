@@ -61,9 +61,11 @@ install_data(
     install_dir: get_option('bindir'),
 )
 
-systemd = dependency('systemd')
-systemd_system_unit_dir = systemd.get_variable('systemd_system_unit_dir')
-subdir('service_files')
+systemd = dependency('systemd', required: get_option('tests').disabled())
+if systemd.found()
+    systemd_system_unit_dir = systemd.get_variable('systemd_system_unit_dir')
+    subdir('service_files')
+endif
 
 sdbusplus_dep = dependency('sdbusplus')
 

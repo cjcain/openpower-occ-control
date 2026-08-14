@@ -162,6 +162,20 @@ class OccDBusSensors
      */
     bool hasDvfsTemp(const std::string& path) const;
 
+    /** @brief Set the value of the tcontrol temp sensor
+     *
+     *  @param[in] path  - The object path
+     *  @param[in] value - The value of the Value property
+     */
+    void setTcontrolTemp(const std::string& path, double value);
+
+    /** @brief Says if the tcontrol temp sensor is already present
+     *
+     *  @param[in] path  - The object path
+     *  @return bool - If the sensor is already present
+     */
+    bool hasTcontrolTemp(const std::string& path) const;
+
     /** @brief Set the purpose of the Sensor
      *
      *  @param[in] path  - The object path
@@ -188,6 +202,13 @@ class OccDBusSensors
      * isn't active.
      */
     std::map<std::string, std::unique_ptr<SensorIntf>> dvfsTemps;
+
+    /** @brief Map of tcontrol temps
+     *
+     * These do not have associations and do not get set to NaN when the OCC
+     * isn't active.
+     */
+    std::map<std::string, std::unique_ptr<SensorIntf>> tcontrolTemps;
 };
 
 } // namespace dbus

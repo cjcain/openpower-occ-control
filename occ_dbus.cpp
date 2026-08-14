@@ -243,6 +243,18 @@ void OccDBusSensors::setDvfsTemp(const std::string& path, double value)
     dvfsTemps[path]->value(value);
 }
 
+bool OccDBusSensors::hasTcontrolTemp(const std::string& path) const
+{
+    return tcontrolTemps.find(path) != tcontrolTemps.end();
+}
+
+void OccDBusSensors::setTcontrolTemp(const std::string& path, double value)
+{
+    tcontrolTemps[path] =
+        std::make_unique<SensorIntf>(utils::getBus(), path.c_str());
+    tcontrolTemps[path]->value(value);
+}
+
 bool OccDBusSensors::setPurpose(const std::string& path,
                                 const std::string& value)
 {
